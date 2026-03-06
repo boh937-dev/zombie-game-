@@ -14,7 +14,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     Mouse look
     LMB shoot/attack
     RMB aim (guns)
-    1-5 switch weapons
+    1-6 switch weapons
     R reload (guns)
     Shift+R restart
 ============================================================================ */
@@ -29,7 +29,7 @@ hud.innerHTML = `
   <div class="row" style="margin-top:6px;"><div><b>Grenade:</b> <span id="grenade">Ready</span></div></div>
   <div id="msg"></div>
   <div style="margin-top:8px;font-size:12px;opacity:.85;">
-    Click to play • WASD • Space jump • LMB shoot • RMB ADS • 1-5 weapons • R reload • Shift+R restart
+    Click to play • WASD • Space jump • LMB shoot • RMB ADS • 1-6 weapons • R reload • Shift+R restart
   </div>
 `;
 document.body.appendChild(hud);
@@ -71,7 +71,7 @@ const WEAPONS = {
     name: "Assault Rifle", slot: 1,
     automatic: true,
     fireRate: 12,
-    damage: 14,
+    damage: 110,
     range: 220,
     spread: 0.012,
     adsFov: 52,
@@ -84,7 +84,7 @@ const WEAPONS = {
     name: "Sniper", slot: 2,
     automatic: false,
     fireRate: 1.0,
-    damage: 9999,          // ✅ INSTA-KILL
+    damage: 9999,          // instant-kill
     range: 320,
     spread: 0.0015,
     adsFov: 26,
@@ -97,7 +97,7 @@ const WEAPONS = {
     name: "Pistol", slot: 3,
     automatic: false,
     fireRate: 4.5,
-    damage: 22,
+    damage: 55,
     range: 200,
     spread: 0.010,
     adsFov: 58,
@@ -111,7 +111,7 @@ const WEAPONS = {
     automatic: false,
     fireRate: 1.7,
     damage: 60,
-    reach: 4.2,            // ✅ longer reach to match bigger blade
+    reach: 4.2,
     adsFov: 75,
     magSize: Infinity,
     reloadTime: 0,
@@ -120,11 +120,21 @@ const WEAPONS = {
   GRENADE: {
     name: "Grenade", slot: 5,
     automatic: false,
-    cooldown: 90,          // 1.5 min
-    blastRadius: 12.5,
+    cooldown: 90,
+    blastRadius: 37.5,
     damage: 160,
     throwSpeed: 18,
     model: "grenade",
+  },
+  RPG: {
+    name: "RPG", slot: 6,
+    automatic: false,
+    cooldown: 4.5,
+    blastRadius: 20,
+    damage: 220,
+    rocketSpeed: 36,
+    rocketLife: 1.4,
+    model: "rpg",
   }
 };
 
@@ -364,7 +374,7 @@ window.addEventListener("keydown", (e) => {
   if (k === "r" && e.shiftKey) { resetGame(); return; }
   if (k === "r" && !e.shiftKey) { startReload(); return; }
 
-  if (k === "1" || k === "2" || k === "3" || k === "4" || k === "5") setWeapon(Number(k));
+  if (k === "1" || k === "2" || k === "3" || k === "4" || k === "5" || k === "6") setWeapon(Number(k));
 
   if (k === " " || k === "space") {
     if (player.alive && player.grounded) {
@@ -421,6 +431,7 @@ const fireState = {
 };
 
 let grenadeCooldown = 0;
+let rpgCooldown = 0;
 
 function weaponKey(w) {
   if (w === WEAPONS.AR) return "AR";
@@ -589,6 +600,33 @@ function rebuildWeaponModel(kind) {
     band.rotation.x = Math.PI / 2; band.position.set(0.26, -0.26, -0.55); g.add(band);
 
     g.position.set(0.02, -0.02, 0);
+  }
+  if (kind === "rpg") {
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 1.20, 16), black);
+    tube.rotation.x = Math.PI / 2;
+    tube.position.set(0.30, -0.20, -1.00);
+    g.add(tube);
+
+    const frontRing = new THREE.Mesh(new THREE.TorusGeometry(0.10, 0.015, 8, 16), steel);
+    frontRing.rotation.x = Math.PI / 2;
+    frontRing.position.set(0.30, -0.20, -1.60);
+    g.add(frontRing);
+
+    const rearRing = new THREE.Mesh(new THREE.TorusGeometry(0.10, 0.015, 8, 16), steel);
+    rearRing.rotation.x = Math.PI / 2;
+    rearRing.position.set(0.30, -0.20, -0.40);
+    g.add(rearRing);
+
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.20, 0.12), tape);
+    grip.position.set(0.20, -0.35, -0.82);
+    g.add(grip);
+
+    const sight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.10, 0.03), steel);
+    sight.position.set(0.30, -0.08, -1.25);
+    g.add(sight);
+
+    muzzleLocal = new THREE.Vector3(0.30, -0.20, -1.66);
+    g.position.set(0.04, -0.03, 0);
   }
 
   weaponRoot.add(g);
@@ -784,6 +822,7 @@ function finishReload() {
 
 // -------------------- Grenades --------------------
 const grenades = [];
+const rockets = [];
 function throwGrenade() {
   const start = muzzleLocal.clone();
   camera.localToWorld(start);
@@ -805,6 +844,32 @@ function throwGrenade() {
     life: 2.0
   });
 
+  muzzleFlash(start);
+}
+function fireRPG() {
+  const start = muzzleLocal.clone();
+  camera.localToWorld(start);
+
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  dir.normalize();
+
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.05, 0.32, 12),
+    new THREE.MeshStandardMaterial({ color: 0x5f666f, roughness: 0.6, metalness: 0.6 })
+  );
+  mesh.rotation.x = Math.PI / 2;
+  mesh.position.copy(start);
+  mesh.castShadow = true;
+  scene.add(mesh);
+
+  rockets.push({
+    mesh,
+    vel: dir.clone().multiplyScalar(WEAPONS.RPG.rocketSpeed),
+    life: WEAPONS.RPG.rocketLife,
+  });
+
+  player.pitch += 0.016;
   muzzleFlash(start);
 }
 
@@ -866,7 +931,26 @@ function updateGrenades(dt) {
     }
   }
 }
+function updateRockets(dt) {
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const r = rockets[i];
+    r.life -= dt;
+    r.mesh.position.addScaledVector(r.vel, dt);
+    r.mesh.lookAt(r.mesh.position.clone().add(r.vel));
 
+    if (r.mesh.position.y < 0.15) {
+      r.mesh.position.y = 0.15;
+      r.life = 0;
+    }
+
+    if (r.life <= 0) {
+      const p = r.mesh.position.clone();
+      scene.remove(r.mesh);
+      rockets.splice(i, 1);
+      explodeAt(p, WEAPONS.RPG.blastRadius, WEAPONS.RPG.damage);
+    }
+  }
+}
 // -------------------- Attacks --------------------
 function attemptAttack() {
   const w = currentWeapon;
@@ -877,6 +961,12 @@ function attemptAttack() {
     if (grenadeCooldown > 0) return;
     throwGrenade();
     grenadeCooldown = WEAPONS.GRENADE.cooldown;
+    return;
+  }
+  if (w === WEAPONS.RPG) {
+    if (rpgCooldown > 0) return;
+    fireRPG();
+    rpgCooldown = WEAPONS.RPG.cooldown;
     return;
   }
 
@@ -1045,9 +1135,13 @@ function updateZombies(dt) {
 
 // -------------------- HUD / cooldowns --------------------
 function updateHUD(dt) {
+  grenadeCooldown = Math.max(0, grenadeCooldown - dt);
+  rpgCooldown = Math.max(0, rpgCooldown - dt);
+
   if (grenadeCooldown > 0) {
-    grenadeCooldown = Math.max(0, grenadeCooldown - dt);
-    ui.grenade.textContent = `Reloading: ${Math.ceil(grenadeCooldown)}s`;
+    ui.grenade.textContent = `Grenade: ${Math.ceil(grenadeCooldown)}s`;
+  } else if (rpgCooldown > 0) {
+    ui.grenade.textContent = `RPG: ${Math.ceil(rpgCooldown)}s`;
   } else {
     ui.grenade.textContent = "Ready";
   }
@@ -1120,8 +1214,11 @@ function resetGame() {
 
   for (const g of grenades) scene.remove(g.mesh);
   grenades.length = 0;
+  for (const r of rockets) scene.remove(r.mesh);
+  rockets.length = 0;
 
   grenadeCooldown = 0;
+  rpgCooldown = 0;
   fireState.cooldown = 0;
   fireState.katanaSwing = 0;
   fireState.reloading = false;
@@ -1161,6 +1258,7 @@ function animate() {
   updatePlayer(dt);
   updateZombies(dt);
   updateGrenades(dt);
+  updateRockets(dt);
   updateHUD(dt);
 
   ui.zombies.textContent = String(zombies.length);
@@ -1182,4 +1280,16 @@ rebuildWeaponModel(currentWeapon.model);
 setWeapon(1);
 ui.status.textContent = "Ready";
 updateAmmoUI();
+
+
+
+
+
+
+
+
+
+
+
+
 
